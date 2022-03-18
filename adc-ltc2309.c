@@ -2,6 +2,8 @@
 //
 // I2C ADC LTC2309 (12bits-8CH) Test Application. (Use 8 Single-Ended, Unipolar Mode)
 //
+// compile : make
+//
 // Run : sudo ./<created excute file name>
 //
 //------------------------------------------------------------------------------------------------------------
