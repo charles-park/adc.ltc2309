@@ -31,6 +31,7 @@
 #define info_msg(fmt, args...)	fprintf(stdout, "[INFO] " fmt, ##args)
 #define	err_msg(fmt, args...)	fprintf(stdout, "[*ERROR*] " fmt, ##args)
 #define msg(fmt, args...)		fprintf(stdout, fmt, ##args)
+
 //------------------------------------------------------------------------------------------------------------
 // LTC2309 DEVICE ADDR
 //------------------------------------------------------------------------------------------------------------
@@ -65,10 +66,6 @@
 //       Single-ended = 1 | ODD = 1  | S1 = 0 | S0 = 1 | Unipolar = 1 | sleep = 0 | x | x | = 0xD8
 //
 //------------------------------------------------------------------------------------------------------------
-const char *DEVICE_NAME = "/dev/i2c-0";
-const char *PIN_NAME = '\0';
-const char *HEADER_NAME = '\0';
-
 #define SWAP_WORD(x)	(((x >> 8) & 0xFF) | ((x << 8) & 0xFF00))
 
 #define	ADC_REF_VOLTAGE	5
@@ -250,6 +247,13 @@ const struct pin_info HEADER_P1_6[] = {
 #define	ARRARY_SIZE(x)	(sizeof(x) / sizeof(x[0]))
 
 //------------------------------------------------------------------------------------------------------------
+const char *OPT_DEVICE_NAME = "/dev/i2c-0";
+const char *OPT_PIN_NAME = '\0';
+unsigned char opt_view = 0;
+unsigned char opt_iter = 0;
+unsigned char opt_unit = 0;
+
+//------------------------------------------------------------------------------------------------------------
 int read_pin_value (int fd, struct pin_info *info)
 {
 	int read_val = 0;
@@ -266,14 +270,11 @@ int read_pin_value (int fd, struct pin_info *info)
 }
 
 //------------------------------------------------------------------------------------------------------------
-int read_pin_mV (int fd, struct pin_info *info)
+unsigned long adc_convert_value (unsigned short adc_value)
 {
-	int pin_volt = 0;
-	
-	pin_volt = read_pin_value (fd, info);
-	pin_volt *= ADC_WEIGHT_uV;
+	unsigned long volt = adc_value * ADC_WEIGHT_uV;
 
-	return (pin_volt / 1000);
+	return	(opt_unit) ? (volt) : (volt / 1000);
 }
 
 //------------------------------------------------------------------------------------------------------------
@@ -347,11 +348,13 @@ struct pin_info *header_info(const char *h_name, char pin_no, char *p_cnt)
 	}
 	return p;
 }
+
 //------------------------------------------------------------------------------------------------------------
 int print_pin_info(int fd, const char *name)
 {
 	char *h_name, *pin_str;
-	char str[10], pin_no = 0, pin_cnt = 0, i;
+	char str[10], pin_no = 0, pin_cnt = 0, i, iter;
+	unsigned long real, avr, max, min, diff;
 	struct pin_info *p;
 
 	if (!name)
@@ -370,26 +373,61 @@ int print_pin_info(int fd, const char *name)
 	// DEBUG
 	dbg_msg("%s : header = %s, pin = %d, pin_cnt = %d\n", name, h_name, pin_no, pin_cnt);
 
-	if (pin_cnt) {
-		msg("\n");
-		for (i = 0; i < pin_cnt; i++, p++) {
-			msg("[%8s] : %4d", p->name, read_pin_mV(fd, p));
-			if ((i % 2))
-				msg("\n");
-			else
-				msg("\t");
-		}
+	if (!opt_view) {
+		msg ("%10s\t%8s\t%8s\t%8s\t%8s\n", "PIN Name","Avr","Max","Min","Diff","unit");
+		msg ("--------------------------------------------------------------------------\n");
 	}
-	msg("\n");
+
+	if (pin_cnt) {
+		for (i = 0; i < pin_cnt; i++, p++) {
+			real = adc_convert_value(read_pin_value(fd, p));
+			avr = real, max = real, min = real;
+
+			iter = opt_iter > 0 ? (opt_iter -1) : 0;
+			while(iter--) {
+				avr += real;
+				max = real > max ? real : max;
+				min = real < min ? real : min;
+				real = adc_convert_value(read_pin_value(fd, p));
+			}
+			if (opt_iter)
+				avr = avr / opt_iter;
+
+			if (opt_view)
+				msg("%ld,", avr);
+			else
+				msg ("%10s\t%8ld\t%8ld\t%8ld\t%8ld\n", p->name, avr, max, min, max - min);
+
+		}
+		msg("\n");
+	}
+
 	return 0;
 }
+
+//------------------------------------------------------------------------------------------------------------
+void print_all_info (int fd)
+{
+	print_pin_info(fd, "CON1");
+	print_pin_info(fd, "P3");
+	print_pin_info(fd, "P13");
+	print_pin_info(fd, "P1_1");
+	print_pin_info(fd, "P1_2");
+	print_pin_info(fd, "P1_3");
+	print_pin_info(fd, "P1_4");
+	print_pin_info(fd, "P1_5");
+	print_pin_info(fd, "P1_6");
+}
+
 //------------------------------------------------------------------------------------------------------------
 static void print_usage(const char *prog)
 {
 	info_msg("Usage: %s [-DsbdlHOLC3vpNR24SI]\n", prog);
 	puts("  -D --device   device to use (default /dev/i2c-0)\n"
-	     "  -p --pin      pin name with header name (e.g. \"con1.0/p1_1.1/p13.1...\")\n"
-	     "  -h --header   header name (e.g. \"con1/p1_1/p13...\")\n"
+	     "  -p --pin      pin name or header name (default \'All pins\'. e.g. \"con1/con1.1...\")\n"
+	     "  -u --unit     unit of value (default \"mV\". e.g. \"mV/uV\")\n"
+	     "  -v --view     show only values with \",\"\n"
+	     "  -i --iter     iterations\n"
 	);
 	exit(1);
 }
@@ -401,25 +439,35 @@ static void parse_opts(int argc, char *argv[])
 		static const struct option lopts[] = {
 			{ "device",  	1, 0, 'D' },
 			{ "pin",		1, 0, 'p' },
-			{ "header",		1, 0, 'h' },
+			{ "unit",		1, 0, 'u' },
+			{ "view",		0, 0, 'v' },
+			{ "iter",		1, 0, 'i' },
 			{ NULL, 0, 0, 0 },
 		};
 		int c;
 
-		c = getopt_long(argc, argv, "D:p:h:", lopts, NULL);
+		c = getopt_long(argc, argv, "D:p:u:vi:", lopts, NULL);
 
 		if (c == -1)
 			break;
 
 		switch (c) {
 		case 'D':
-			DEVICE_NAME = optarg;
+			OPT_DEVICE_NAME = optarg;
 			break;
 		case 'p':
-			PIN_NAME = optarg;
+			OPT_PIN_NAME = optarg;
 			break;
-		case 'h':
-			HEADER_NAME = optarg;
+		case 'u':
+			toupper_str(optarg);
+			opt_unit = (!strncmp(optarg, "UV", sizeof(optarg))) ? 1 : 0;
+			break;
+		case 'v':
+			opt_view = 1;
+			break;
+		case 'i':
+			opt_iter = atoi(optarg);
+			opt_iter = (opt_iter) > 100 ? 100 : opt_iter;
 			break;
 		default:
 			print_usage(argv[0]);
@@ -437,7 +485,7 @@ int check_adc (int fd)
 		i2c_set_addr(fd, ADC_ADDR[i]);
 		if(i2c_read_word(fd, ADC_ADDR[i]) < 0) {
 			info_msg("Not detect %s ADC%d(Device Addr : 0x%02x)\n",
-				DEVICE_NAME, i, ADC_ADDR[i]);
+				OPT_DEVICE_NAME, i, ADC_ADDR[i]);
 			ret = -1;
 		}
 	}
@@ -448,11 +496,10 @@ int check_adc (int fd)
 //------------------------------------------------------------------------------------------------------------
 int main (int argc, char *argv[])
 {
-	int fd, i;
-	struct pin_info p_info;
+	int fd;
 	
 	parse_opts(argc, argv);
-	if ((fd = i2c_open(DEVICE_NAME)) < 0)
+	if ((fd = i2c_open(OPT_DEVICE_NAME)) < 0)
 		return -1;
 
 	if (check_adc(fd)) {
@@ -460,8 +507,10 @@ int main (int argc, char *argv[])
 		return -1;
 	}
 
-	print_pin_info(fd, PIN_NAME);
-	print_pin_info(fd, HEADER_NAME);
+	if (OPT_PIN_NAME)
+		print_pin_info(fd, OPT_PIN_NAME);
+	else
+		print_all_info(fd);
 
 	return 0;
 }
