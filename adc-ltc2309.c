@@ -424,7 +424,7 @@ void print_all_info (int fd)
 //------------------------------------------------------------------------------------------------------------
 static void print_usage(const char *prog)
 {
-	info_msg("Usage: %s [-DsbdlHOLC3vpNR24SI]\n", prog);
+	info_msg("Usage: %s [-Dpuvi]\n", prog);
 	puts("  -D --device   device to use (default /dev/i2c-0)\n"
 	     "  -p --pin      pin name or header name (default \'All pins\'. e.g. \"con1/con1.1...\")\n"
 	     "  -u --unit     unit of value (default \"mV\". e.g. \"mV/uV\")\n"
